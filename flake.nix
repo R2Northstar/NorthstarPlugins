@@ -59,11 +59,13 @@
           {
             ranim = mkPlugin "ranim";
             serialized-io = mkPlugin "serialized_io";
+            sqhooks = mkPlugin "sqhooks";
             default = native-pkgs.symlinkJoin {
               name = "plugins";
               paths = with self.packages.${system}; [
                 ranim
                 serialized-io
+                sqhooks
               ];
             };
             all = native-pkgs.symlinkJoin {
@@ -71,6 +73,7 @@
               paths = with self.packages.${system}; [
                 ranim
                 serialized-io
+                sqhooks
               ];
             };
           };
