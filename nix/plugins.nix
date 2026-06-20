@@ -17,10 +17,10 @@ rustPlatform.buildRustPackage {
   src = ../.;
 
   inherit buildType;
-  rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ../toolchain.toml;
+  rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ../rust-toolchain.toml;
 
   nativeBuildInputs = [
-    (rust-bin.fromRustupToolchainFile ../toolchain.toml)
+    (rust-bin.fromRustupToolchainFile ../rust-toolchain.toml)
     pkgs.pkg-config
   ];
 

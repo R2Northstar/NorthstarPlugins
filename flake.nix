@@ -39,7 +39,7 @@
           };
           config.microsoftVisualStudioLicenseAccepted = true;
         };
-        toolchain = (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./toolchain.toml);
+        toolchain = (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml);
       in
       {
         formatter = native-pkgs.nixfmt-tree;

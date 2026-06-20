@@ -1,0 +1,312 @@
+#![allow(unused)]
+
+use std::ffi::c_void;
+
+use rrplug::{
+    bindings::squirreldatatypes::{SQClosure, SQObject, SQObjectType, SQSharedState},
+    offset_functions,
+};
+
+offset_functions! {
+    SERVER_FUNCTIONS + ServerFunctions for WhichDll::Server => {
+        sqclosure_new_alloc = unsafe extern "C" fn(*mut SQSharedState, *mut SQObject) -> *mut SQClosure where offset(0x1d30);
+    }
+}
+
+offset_functions! {
+    CLIENT_FUNCTIONS + ClientFunctions for WhichDll::Client => { // wrong offsets
+        sqclosure_new_alloc = unsafe extern "C" fn(*mut SQSharedState, *mut SQObject) -> *mut SQClosure where offset(0x1d30);
+    }
+}
+
+#[allow(non_camel_case_types)]
+type othervarInfo = ();
+
+#[allow(non_snake_case)]
+#[derive(Copy, Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SQFuncState {
+    pub gap_0: [u8; 1536],
+    pub unknown_600: i32,
+    pub gap_604: [u8; 256],
+    pub lexicalScopesSizeMaybe: i32,
+    pub gap_708: [u8; 8200],
+    pub constInfo: [SQLocalVarInfo; 32],
+    pub _constSize: i32,
+    pub gap_2C14: [u8; 1292],
+    pub _vlocalsData: *mut SQLocalVarInfo,
+    pub _vlocalsSize: u32,
+    pub _vlocalsAllocatedSize: u32,
+    pub unknownPointer_3130: *mut i32,
+    pub unknown_3138: u32,
+    pub gap_313C: [u8; 20],
+    pub _stacksize: u32,
+    pub gap_3154: [u8; 36],
+    pub unknownObject_3178: SQObject,
+    pub gap_3188: [u8; 8],
+    pub unknown_3190: u32,
+    pub gap_3194: [u8; 12],
+    pub _parametersSize: u32,
+    pub gap_31A4: [u8; 4],
+    pub unkknown_31A8: char,
+    pub gap_31A9: [u8; 7],
+    pub unknown_31B0: u32,
+    pub gap_31B4: [u8; 4],
+    pub _instructions: *mut SQInstruction,
+    pub _instructionsSize: u32,
+    pub _instructionsAllocatedSize: u32,
+    pub gap_31C8: [u8; 8],
+    pub unknown_31D0: u32,
+    pub gap_31D4: [u8; 4],
+    pub unknown_31D8: i32,
+    pub gap_31DC: [u8; 4],
+    pub _localvarinfoData: *mut SQLocalVarInfo,
+    pub _localvarinfoSize: u32,
+    pub _localvarinfoAllocadedSize: u32,
+    pub gap_31F0: [u8; 16],
+    pub unknownSqTable_3200: SQObject,
+    pub funcName: SQObject,
+    pub fileName: SQObject,
+    pub gap_3230: [u8; 4],
+    pub _nliterralsMaybe: u32,
+    pub unknown_3238: u32,
+    pub gap_323C: [u8; 4],
+    pub _lineInfoData: *mut SQLineInfo,
+    pub _lineInfoSize: u32,
+    pub _lineInfoAllocatedSize: i32,
+    pub unknown_3250: i64,
+    pub gap_3258: [u8; 32],
+    pub _defaultParamData: *mut c_void,
+    pub _defaultParamSize: u32,
+    pub gap_3284: [u8; 4],
+    pub lastLineInfoLine: i32,
+    pub gap_328C: [u8; 4],
+    pub unknown_3290: char,
+    pub gap_3291: [u8; 7],
+    pub sharedState: *mut SQSharedState,
+    pub gap_32A0: [u8; 16],
+    pub unknown_32B0: i64,
+    pub unknown_32B8: u32,
+    pub gap_32BC: [u8; 4],
+    pub unknownPointer_32C0: *mut c_void,
+    pub unknown_32C8: i64,
+    pub error_func: *mut c_void,
+    pub error_func_param: i64,
+}
+
+#[allow(non_snake_case)]
+#[derive(Copy, Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SQFunctionProtoB {
+    pub vftable: *mut c_void,
+    pub uiRef: i32,
+    pub gap_0C: [u8; 12],
+    pub pointer_18: *mut c_void,
+    pub pointer_20: *mut c_void,
+    pub sharedState: *mut c_void,
+    pub pointer_30: *mut c_void,
+    pub fileName: SQObject,
+    pub funcName: SQObject,
+    pub obj_58: SQObject,
+    pub gap_68: [u8; 8],
+    pub unknown_70: i32,
+    pub _stacksize: i32,
+    pub gap_78: [u8; 4],
+    pub localVarInfoSize: i32,
+    pub localVarInfos: *mut SQLocalVarInfo,
+    pub lineInfoSize: i32,
+    pub gap_8C: [u8; 4],
+    pub lineInfos: *mut SQLineInfo,
+    pub literalsSize: i32,
+    pub gap_9C: [u8; 4],
+    pub literals: *mut SQObject,
+    pub nParameters: i32,
+    pub gap_AC: [u8; 4],
+    pub _parameters: *mut SQObject,
+    pub unknown_B8: i32,
+    pub gap_BC: [u8; 4],
+    pub unknownPointer: *mut SQObject,
+    pub unknown_C8: i32,
+    pub gap_CC: [u8; 4],
+    pub unknownArray_D0: *mut usize,
+    pub otherVarInfoSize: i32,
+    pub gap_DC: [u8; 4],
+    pub _otherVarInfo: *mut othervarInfo,
+    pub nDefaultParams: i32,
+    pub gap_EC: [u8; 4],
+    pub objectArray_F0: *mut SQObject,
+    pub unknown_F8: i32,
+    pub gap_FC: [u8; 4],
+    pub skippedInstruction: SQInstruction,
+    pub instruction: [SQInstruction; 1],
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C, align(4))]
+pub struct SQInstruction {
+    pub op: SQOpCodes,
+    pub arg1: i32,
+    pub output: i32,
+    pub arg2: i16,
+    pub arg3: i16,
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct SQLocalVarInfo {
+    pub name: SQObject,
+    pub qword10: usize,
+    pub _start_op: i32,
+    pub _end_op: i32,
+    pub stackpos: i32,
+    pub dword24: i32,
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct SQLineInfo {
+    pub line: i32,
+    pub op: i32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+#[allow(non_snake_case)]
+pub struct SQWeakRef {
+    pub vftable: *mut ::std::os::raw::c_void,
+    pub weakRef: ::std::os::raw::c_int,
+    pub uiRef: ::std::os::raw::c_int,
+    pub obj: SQObject,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug)]
+#[allow(dead_code)]
+#[repr(i32)]
+pub enum SQOpCodes {
+    OP_LINE = 0,
+    OP_LOAD = 1,
+    OP_LOADCOPY = 2,
+    OP_LOADINT = 3,
+    OP_LOADFLOAT = 4,
+    OP_DLOAD = 5,
+    OP_TAILCALL = 6,
+    OP_CALL = 7,
+    OP_PREPCALL = 8,
+    OP_PREPCALLK = 9,
+    OP_GETK = 10,
+    OP_MOVE = 11,
+    OP_NEWSLOT = 12,
+    OP_DELETE = 13,
+    OP_SET = 14,
+    OP_GET = 15,
+    OP_EQ = 16,
+    OP_NE = 17,
+    OP_ARITH = 18,
+    OP_BITW = 19,
+    OP_RETURN = 20,
+    OP_LOADNULLS = 21,
+    OP_LOADROOTTABLE = 22,
+    OP_LOADBOOL = 23,
+    OP_DMOVE = 24,
+    OP_JMP = 25,
+    OP_JNZ = 26,
+    OP_JZ = 27,
+    OP_LOADFREEVAR = 28,
+    OP_VARGC = 29,
+    OP_GETVARGV = 30,
+    OP_NEWTABLE = 31,
+    OP_NEWARRAY = 32,
+    OP_APPENDARRAY = 33,
+    OP_GETPARENT = 34,
+    OP_COMPOUND_ARITH = 35,
+    OP_COMPOUND_ARITH_LOCAL = 36,
+    OP_INCREMENT_PREFIX = 37,
+    OP_INCREMENT_PREFIX_LOCAL = 38,
+    OP_INCREMENT_PREFIX_STRUCTFIELD = 39,
+    OP_INCREMENT_POSTFIX = 40,
+    OP_INCREMENT_POSTFIX_LOCAL = 41,
+    OP_INCREMENT_POSTFIX_STRUCTFIELD = 42,
+    OP_CMP = 43,
+    OP_EXISTS = 44,
+    OP_INSTANCEOF = 45,
+    OP_NEG = 46,
+    OP_NOT = 47,
+    OP_BWNOT = 48,
+    OP_CLOSURE = 49,
+    OP_FOREACH = 50,
+    OP_FOREACH_STATICARRAY_START = 51,
+    OP_FOREACH_STATICARRAY_NEXT = 52,
+    OP_FOREACH_STATICARRAY_NESTEDSTRUCT_START = 53,
+    OP_FOREACH_STATICARRAY_NESTEDSTRUCT_NEXT = 54,
+    OP_DELEGATE = 55,
+    OP_CLONE = 56,
+    OP_TYPEOF = 57,
+    OP_PUSHTRAP = 58,
+    OP_POPTRAP = 59,
+    OP_THROW = 60,
+    OP_CLASS = 61,
+    OP_NEWSLOTA = 62,
+    OP_EQ_LITERAL = 63,
+    OP_NE_LITERAL = 64,
+    OP_FOREACH_SETUP = 65,
+    OP_ASSERT_FAILED = 66,
+    OP_ADD = 67,
+    OP_SUB = 68,
+    OP_MUL = 69,
+    OP_DIV = 70,
+    OP_MOD = 71,
+    OP_PREPCALLK_CALL = 72,
+    OP_PREPCALLK_MOVE_CALL = 73,
+    OP_PREPCALLK_LOADINT_CALL = 74,
+    OP_CMP_JZ = 75,
+    OP_INCREMENT_LOCAL_DISCARD_JMP = 76,
+    OP_JZ_RETURN = 77,
+    OP_JZ_LOADBOOL_RETURN = 78,
+    OP_NEWVECTOR = 79,
+    OP_ZEROVECTOR = 80,
+    OP_GET_VECTOR_COMPONENT = 81,
+    OP_SET_VECTOR_COMPONENT = 82,
+    OP_VECTOR_COMPONENT_MINUSEQ = 83,
+    OP_VECTOR_COMPONENT_PLUSEQ = 84,
+    OP_VECTOR_COMPONENT_MULEQ = 85,
+    OP_VECTOR_COMPONENT_DIVEQ = 86,
+    OP_VECTOR_NORMALIZE = 87,
+    OP_VECTOR_NORMALIZE_IN_PLACE = 88,
+    OP_VECTOR_DOT_PRODUCT = 89,
+    OP_VECTOR_DOT_PRODUCT2D = 90,
+    OP_VECTOR_CROSS_PRODUCT = 91,
+    OP_VECTOR_CROSS_PRODUCT2D = 92,
+    OP_VECTOR_LENGTH = 93,
+    OP_VECTOR_LENGTHSQR = 94,
+    OP_VECTOR_LENGTH2D = 95,
+    OP_VECTOR_LENGTH2DSQR = 96,
+    OP_VECTOR_DISTANCE = 97,
+    OP_VECTOR_DISTANCESQR = 98,
+    OP_VECTOR_DISTANCE2D = 99,
+    OP_VECTOR_DISTANCE2DSQR = 100,
+    OP_INCREMENT_LOCAL_DISCARD = 101,
+    OP_FASTCALL = 102,
+    OP_FASTCALL_NATIVE = 103,
+    OP_FASTCALL_NATIVE_ARGTYPECHECK = 104,
+    OP_FASTCALL_ENV = 105,
+    OP_FASTCALL_NATIVE_ENV = 106,
+    OP_FASTCALL_NATIVE_ENV_ARGTYPECHECK = 107,
+    OP_LOADGLOBALARRAY = 108,
+    OP_GETGLOBAL = 109,
+    OP_SETGLOBAL = 110,
+    OP_COMPOUND_ARITH_GLOBAL = 111,
+    OP_GETSTRUCTFIELD = 112,
+    OP_SETSTRUCTFIELD = 113,
+    OP_COMPOUND_ARITH_STRUCTFIELD = 114,
+    OP_NEWSTRUCT = 115,
+    OP_GETSUBSTRUCT = 116,
+    OP_GETSUBSTRUCT_DYNAMIC = 117,
+    OP_TYPECAST = 118,
+    OP_TYPECHECK = 119,
+    OP_TYPECHECK_ORNULL = 120,
+    OP_TYPECHECK_NOTNULL = 121,
+    OP_CHECK_ENTITY_CLASS = 122,
+    OP_UNREACHABLE = 123,
+    OP_ARRAY_RESIZE = 124,
+}
