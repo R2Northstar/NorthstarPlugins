@@ -276,7 +276,7 @@ fn sqfunc_state_build_proto_hook(
     org(state)
 }
 
-#[rrplug::sqfunction(VM = "SERVER | UI | CLIENT", ExportName = "__CallHook")]
+#[rrplug::sqfunction(VM = "SERVER | UI | CLIENT", ExportName = "HookOn")]
 pub fn hook_on(function_id: String, hook_func: SQHandle<SQClosure>) -> Option<String> {
     let context = unsafe { sqvm_to_context(sqvm) };
     let mut hooks = HOOKS.lock();

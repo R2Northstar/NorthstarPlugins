@@ -16,6 +16,8 @@ impl Plugin for SQHooks {
         PluginInfo::new(c"sqhooks", c"SQHOOKPLG", c"SQHOOKS", PluginContext::all());
 
     fn new(_reloaded: bool) -> Self {
+        register_sq_functions(hook_install::hook_on);
+
         Self {}
     }
     fn on_dll_load(
