@@ -6,7 +6,10 @@ use rrplug::{
 };
 use std::{ffi::c_void, mem::transmute};
 
-use crate::{hook_dispatch, hook_install::prepare_hook};
+use crate::{
+    hook_dispatch,
+    hook_install::{self, prepare_hook},
+};
 
 static_detour! {
     static Server_CSquirrelVM_InitGcMaybe: unsafe extern "C" fn(*mut CSquirrelVM, *mut HSquirrelVM, u32, usize);
@@ -80,6 +83,7 @@ fn hook_csquirrel_vm_init_gc(
     _ = mid::squirrel::SQFUNCTIONS.try_init(); // make sure all functions exist
     _ = unsafe { manually_register_sq_functions(&mut *csqvm, &register_hook()) };
     _ = unsafe { manually_register_sq_functions(&mut *csqvm, &hook_dispatch::call_hook()) };
+    _ = unsafe { manually_register_sq_functions(&mut *csqvm, &hook_install::extract()) };
 }
 
 #[rrplug::sqfunction(VM = "SERVER | UI | CLIENT", ExportName = "SQRegisterHook")]

@@ -1,17 +1,24 @@
 use core::str;
 use high::squirrel_traits::IsSQObject;
 use rrplug::{
-    bindings::squirreldatatypes::{
-        SQClosure, SQFunctionProto, SQNativeClosure, SQObject, SQObjectType, SQObjectValue,
-        SQString, SQTable,
+    bindings::{
+        squirrelclasstypes::SQRESULT::{self, SQRESULT_ERROR},
+        squirreldatatypes::{
+            SQClosure, SQFunctionProto, SQNativeClosure, SQObject,
+            SQObjectType::{self, OT_NULL},
+            SQObjectValue, SQString, SQTable,
+        },
     },
-    high::squirrel::SQHandle,
+    high::squirrel::{SQHandle, compile_string},
     mid::squirrel::sqvm_to_context,
     prelude::*,
 };
 use std::ptr::{self, NonNull};
 
-use crate::bindings::{CLIENT_FUNCTIONS, SERVER_FUNCTIONS, SQFunctionProtoB};
+use crate::{
+    bindings::{CLIENT_FUNCTIONS, SERVER_FUNCTIONS, SQFuncState, SQFunctionProtoB},
+    hook_install::EXTRACT,
+};
 
 pub fn get_native_function<'a>(
     sqvm: NonNull<HSquirrelVM>,
@@ -60,11 +67,73 @@ pub fn ty_filter<'a, T: IsSQObject<'a> + 'a>(
 pub fn compile_trampoline(
     sqvm: NonNull<HSquirrelVM>,
     sq_functions: &SquirrelFunctions,
-    ref_func: &SQFunctionProtoB,
-    func_name: &str,
+    state: &SQFuncState,
+    function_id: &str,
     trampoline_name: &str,
-) -> Result<SQObject, &'static str> {
-    todo!()
+) -> Result<(NonNull<SQClosure>, NonNull<SQFunctionProto>), &'static str> {
+    let args = (1..state._parametersSize)
+        .map(|i| "var a".to_string() + &i.to_string() + ",")
+        .collect::<String>();
+    let args = args.strip_suffix(",").unwrap_or(&args);
+
+    let args_untyped = (1..state._parametersSize)
+        .map(|i| "a".to_string() + &i.to_string() + ",")
+        .collect::<String>();
+    let args_untyped = args_untyped.strip_suffix(",").unwrap_or(&args_untyped);
+
+    let code = format!(
+        r#"__EXTRACT(var function ({args}) {{return {trampoline_name}("{function_id}", {args_untyped})}})"#
+    );
+    log::warn!("{code}");
+    if let Err(err) = compile_string(sqvm, sq_functions, true, code) {
+        err.log();
+        return Err("failed to compile trampoline");
+    };
+
+    if unsafe { (sq_functions.sq_newtable)(sqvm.as_ptr()) } == SQRESULT::SQRESULT_ERROR {
+        return Err("failed to create tmp table");
+    }
+
+    let (mut trampoline, mut closure_trampoline) = unsafe {
+        let sqclosure = NonNull::from_mut(
+            EXTRACT
+                .lock()
+                .entry(sqvm_to_context(sqvm))
+                .or_default()
+                .take()
+                .ok_or("found none sqclosure sqobject")?
+                .take()
+                .as_mut()
+                .ok_or("found null sqclosure sqobject")?,
+        );
+
+        (as_func_proto(wrap_in_object(sqclosure))?, sqclosure)
+    };
+
+    // increment ref count
+    unsafe { closure_trampoline.as_mut().uiRef += 1 };
+    unsafe { trampoline.as_mut().uiRef += 1 };
+
+    Ok((closure_trampoline, trampoline))
+}
+
+pub fn clone_func_name(org: &SQFunctionProto, dst: &mut SQFunctionProto) {
+    if org._fileNameType == SQString::OT_TYPE && dst._fileNameType == OT_NULL {
+        dst._fileNameType = org._fileNameType;
+        dst._fileName = org._fileName;
+        // SAFETY: checked that the type is valid
+        if let Some(file_name) = unsafe { dst._fileName.as_mut() } {
+            file_name.uiRef += 1;
+        }
+    }
+    if org._funcNameType == SQString::OT_TYPE && dst._funcNameType == OT_NULL {
+        dst._funcNameType = org._funcNameType;
+        dst._funcName = org._funcName;
+        // SAFETY: checked that the type is valid
+        if let Some(file_name) = unsafe { dst._funcName.as_mut() } {
+            file_name.uiRef += 1;
+        }
+    }
 }
 
 pub fn as_func_proto(obj: SQObject) -> Result<NonNull<SQFunctionProto>, &'static str> {

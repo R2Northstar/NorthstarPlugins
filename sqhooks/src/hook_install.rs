@@ -3,14 +3,8 @@
 use parking_lot::Mutex;
 use retour::static_detour;
 use rrplug::{
-    bindings::squirreldatatypes::{
-        SQClosure, SQFunctionProto, SQObject, SQObjectValue, SQSharedState,
-    },
-    high::{
-        UnsafeHandle,
-        squirrel::{SQHandle, compile_string},
-        squirrel_traits::IsSQObject,
-    },
+    bindings::squirreldatatypes::{SQClosure, SQFunctionProto, SQObject, SQSharedState, SQTable},
+    high::{UnsafeHandle, squirrel::SQHandle, squirrel_traits::IsSQObject},
     mid::squirrel::sqvm_to_context,
     prelude::*,
 };
@@ -23,7 +17,10 @@ use std::{
 
 use crate::{
     bindings::{SQFuncState, SQFunctionProtoB},
-    utils::{as_func_proto, get_from_sq_string},
+    hook_dispatch,
+    utils::{
+        as_func_proto, clone_func_name, compile_trampoline, get_from_sq_string, wrap_in_object,
+    },
 };
 
 pub static HOOKS: LazyLock<Mutex<HashMap<ScriptContext, HashMap<String, Hook>>>> =
@@ -32,11 +29,16 @@ pub static HOOKS: LazyLock<Mutex<HashMap<ScriptContext, HashMap<String, Hook>>>>
 pub static HOOK_QUEUE: LazyLock<Mutex<HashMap<ScriptContext, Vec<(String, String)>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+pub static EXTRACT: LazyLock<Mutex<HashMap<ScriptContext, Option<UnsafeHandle<*mut SQClosure>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub static FUN: Mutex<Option<UnsafeHandle<*mut SQSharedState>>> = Mutex::new(None);
+
 static_detour! {
-    static Server_SQFunctionProtoCreate: unsafe extern "C" fn(*mut SQSharedState, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32) -> *mut SQFunctionProtoB;
-    static Client_SQFunctionProtoCreate: unsafe extern "C" fn(*mut SQSharedState, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32) -> *mut SQFunctionProtoB;
     static Server_SQFuncStateBuildProto: unsafe extern "C" fn(*mut SQFuncState) -> *mut SQFunctionProtoB;
     static Client_SQFuncStateBuildProto: unsafe extern "C" fn(*mut SQFuncState) -> *mut SQFunctionProtoB;
+    static Inspect: unsafe extern "C" fn(*mut SQTable, *mut SQObject, usize) -> usize;
+    static Inspect2: unsafe extern "C" fn(usize, usize, usize, usize, u8) -> usize;
 }
 
 #[derive(Debug)]
@@ -59,31 +61,6 @@ pub fn init_hooks(dll: &DLLPointer) {
     unsafe {
         match dll.which_dll() {
             WhichDll::Client => {
-                Client_SQFunctionProtoCreate
-                    .initialize(
-                        transmute::<
-                            *const std::ffi::c_void,
-                            unsafe extern "C" fn(
-                                *mut SQSharedState,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                            )
-                                -> *mut SQFunctionProtoB,
-                        >(dll.offset(0x64920)),
-                        hook_sq_function_proto_client,
-                    )
-                    .expect("cannot initialize Client_SQFunctionProtoCreate")
-                    .enable()
-                    .expect("cannot hook Client_SQFunctionProtoCreate");
-
                 Client_SQFuncStateBuildProto
                     .initialize(
                         transmute::<
@@ -98,31 +75,6 @@ pub fn init_hooks(dll: &DLLPointer) {
             }
 
             WhichDll::Server => {
-                Server_SQFunctionProtoCreate
-                    .initialize(
-                        transmute::<
-                            *const std::ffi::c_void,
-                            unsafe extern "C" fn(
-                                *mut SQSharedState,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                                i32,
-                            )
-                                -> *mut SQFunctionProtoB,
-                        >(dll.offset(0x648c0)),
-                        hook_sq_function_proto_server,
-                    )
-                    .expect("cannot initialize Server_SQFunctionProtoCreate")
-                    .enable()
-                    .expect("cannot hook Server_SQFunctionProtoCreate");
-
                 Server_SQFuncStateBuildProto
                     .initialize(
                         transmute::<
@@ -134,6 +86,18 @@ pub fn init_hooks(dll: &DLLPointer) {
                     .expect("cannot initialize Server_SQFuncStateBuildProto")
                     .enable()
                     .expect("cannot hook Server_SQFuncStateBuildProto");
+
+                // Inspect
+                //     .initialize(transmute(dll.offset(0x6aac0)), a)
+                //     .expect("cannot initialize Inspect")
+                //     .enable()
+                //     .expect("cannot hook Inspect");
+
+                // Inspect2
+                //     .initialize(transmute(dll.offset(0x34810)), b)
+                //     .expect("cannot initialize Inspect2")
+                //     .enable()
+                //     .expect("cannot hook Inspect2");
             }
             _ => {}
         }
@@ -163,23 +127,32 @@ fn sqfunc_state_build_proto_hook(
             .as_mut()
             .expect("null func state in builder not found")
     };
-    let sqvm = unsafe {
+    log::info!("1 {:?} {:?}", ptr::from_mut(state), state.sharedState);
+    let Some(sqvm) = (unsafe {
         state
             .sharedState
             .as_mut()
             .and_then(|ss| ss.cSquirrelVM.as_mut())
             .and_then(|csqvm| csqvm.sqvm.as_mut().map(NonNull::from_mut))
-            .expect("null func sqvm in builder not found")
+    }) else {
+        log::warn!("couldn't find sqvm in build proto hook");
+        return org(state);
     };
     let context = unsafe { sqvm_to_context(sqvm) };
 
-    let handle = SQHandle::try_new(state.funcName).expect("the function name wasn't a string");
-    let Some(function_name) = get_from_sq_string(handle.get()) else {
+    let handle = SQHandle::try_new(state.funcName).ok();
+    let Some(function_name) = handle
+        .as_ref()
+        .and_then(|handle| get_from_sq_string(handle.get()))
+    else {
         return org(state);
     };
 
-    let handle = SQHandle::try_new(state.fileName).expect("the function name wasn't a string");
-    let Some(source_path) = get_from_sq_string(handle.get()) else {
+    let handle = SQHandle::try_new(state.fileName).ok();
+    let Some(source_path) = handle
+        .as_ref()
+        .and_then(|handle| get_from_sq_string(handle.get()))
+    else {
         return org(state);
     };
 
@@ -194,8 +167,43 @@ fn sqfunc_state_build_proto_hook(
             state._defaultParamSize, 0,
             "man idk what to with default parameters, yell at catornot or smth"
         );
+        log::info!("installing hook for {function_name}");
 
         let function_id = source_path.to_string() + function_name;
+
+        let trampoline_name = hook_dispatch::call_hook().sq_func_name;
+
+        unsafe {
+            log::info!(
+                "pre {:?}",
+                sqvm.as_ref()
+                    .sharedState
+                    .as_ref()
+                    .unwrap()
+                    ._functions
+                    .as_ref()
+            )
+        };
+        unsafe {
+            log::info!(
+                "pre {:?}",
+                sqvm.as_ref().sharedState.as_ref().unwrap()._functionsType,
+            )
+        };
+
+        let (closure_trampoline, mut trampoline) = match compile_trampoline(
+            sqvm,
+            SQFUNCTIONS.from_sqvm(sqvm),
+            state,
+            &function_id,
+            &trampoline_name,
+        ) {
+            Ok(o) => o,
+            Err(err) => {
+                log::warn!("error occurred while building trampoline memory may be leaked : {err}");
+                return org(state);
+            }
+        };
 
         let orig = unsafe {
             let mut orig = UnsafeHandle::new(
@@ -207,70 +215,40 @@ fn sqfunc_state_build_proto_hook(
             orig
         };
 
-        let args = (1..state._parametersSize)
-            .map(|i| "var a".to_string() + &i.to_string() + ",")
-            .collect::<String>();
-        let args = args.strip_suffix(",").unwrap_or(&args);
-
-        let args_untyped = (1..state._parametersSize)
-            .map(|i| "a".to_string() + &i.to_string() + ",")
-            .collect::<String>();
-        let args_untyped = args_untyped.strip_suffix(",").unwrap_or(&args_untyped);
-
-        // TODO: create this function in hook_dispatch
-        let trampoline_name = "HookTrampoline";
-
-        if let Err(err) = compile_string(
-            sqvm,
-            SQFUNCTIONS.from_sqvm(sqvm),
-            true,
-            dbg!(format!(
-                "return (var function ({args}) {{return {trampoline_name}(\"{function_id}\", {args_untyped})}})"
-            )),
-        ) {
-            err.log();
-        };
-
-        let (trampoline, closure_trampoline) = unsafe {
-            let sqclosure = sqvm
-                .as_ref()
-                ._stack
-                .add(sqvm.as_ref()._top as usize - 1)
-                .as_ref()
-                .unwrap()
-                ._VAL
-                .asClosure
-                .as_mut()
-                .unwrap();
-
-            (
-                sqclosure._function._VAL.asFuncProto.as_ref().unwrap(),
-                sqclosure,
-            )
-        };
-
-        // increment ref count
-        closure_trampoline.uiRef += 1;
+        unsafe { clone_func_name(orig.copy().as_ref(), trampoline.as_mut()) };
 
         HOOKS.lock().entry(context).or_default().insert(
             function_id.clone(),
             Hook {
                 hook_queue: vec![orig],
                 current_hook: 1, // top most hook
-                trampoline: unsafe {
-                    UnsafeHandle::new(SQObject {
-                        _Type: SQClosure::OT_TYPE,
-                        structNumber: 0,
-                        _VAL: SQObjectValue {
-                            asClosure: ptr::from_ref(closure_trampoline).cast_mut(),
-                        },
-                    })
-                },
+                trampoline: unsafe { UnsafeHandle::new(wrap_in_object(closure_trampoline)) },
                 arg_count: state._parametersSize,
             },
         );
 
-        return ptr::from_ref(trampoline).cast_mut().cast();
+        unsafe {
+            log::info!(
+                "post {:?}",
+                sqvm.as_ref()
+                    .sharedState
+                    .as_ref()
+                    .unwrap()
+                    ._functions
+                    .as_ref()
+            )
+        };
+        unsafe {
+            log::info!(
+                "post {:?}",
+                sqvm.as_ref().sharedState.as_ref().unwrap()._functionsType
+            )
+        };
+
+        FUN.lock()
+            .replace(unsafe { UnsafeHandle::new(sqvm.as_ref().sharedState) });
+
+        return trampoline.as_ptr().cast();
     }
 
     org(state)
@@ -304,149 +282,37 @@ pub fn hook_on(function_id: String, hook_func: SQHandle<SQClosure>) -> Option<St
     None
 }
 
-fn hook_sq_function_proto_client(
-    ss: *mut SQSharedState,
-    ninstructions: i32,
-    param_3: i32,
-    param_4: i32,
-    param_5: i32,
-    param_6: i32,
-    param_7: i32,
-    param_8: i32,
-    param_9: i32,
-    param_10: i32,
-    param_11: i32,
-) -> *mut SQFunctionProtoB {
-    hook_sq_function_proto(
-        |ss: *mut SQSharedState,
-         ninstructions: i32,
-         param_3: i32,
-         param_4: i32,
-         param_5: i32,
-         param_6: i32,
-         param_7: i32,
-         param_8: i32,
-         param_9: i32,
-         param_10: i32,
-         param_11: i32| unsafe {
-            Client_SQFunctionProtoCreate.call(
-                ss,
-                ninstructions,
-                param_3,
-                param_4,
-                param_5,
-                param_6,
-                param_7,
-                param_8,
-                param_9,
-                param_10,
-                param_11,
-            )
-        },
-        ss,
-        ninstructions,
-        param_3,
-        param_4,
-        param_5,
-        param_6,
-        param_7,
-        param_8,
-        param_9,
-        param_10,
-        param_11,
-    )
+#[rrplug::sqfunction(VM = "SERVER | UI | CLIENT", ExportName = "__EXTRACT")]
+pub fn extract(hook_func: SQObject) {
+    assert!(
+        hook_func._Type == SQClosure::OT_TYPE,
+        "passed wrong value to __EXTRACT"
+    );
+
+    let context = unsafe { sqvm_to_context(sqvm) };
+    let mut lock = EXTRACT.lock();
+    lock.entry(context)
+        .or_default()
+        .replace(unsafe { UnsafeHandle::new(hook_func._VAL.asClosure) });
 }
 
-fn hook_sq_function_proto_server(
-    ss: *mut SQSharedState,
-    ninstructions: i32,
-    param_3: i32,
-    param_4: i32,
-    param_5: i32,
-    param_6: i32,
-    param_7: i32,
-    param_8: i32,
-    param_9: i32,
-    param_10: i32,
-    param_11: i32,
-) -> *mut SQFunctionProtoB {
-    hook_sq_function_proto(
-        |ss: *mut SQSharedState,
-         ninstructions: i32,
-         param_3: i32,
-         param_4: i32,
-         param_5: i32,
-         param_6: i32,
-         param_7: i32,
-         param_8: i32,
-         param_9: i32,
-         param_10: i32,
-         param_11: i32| unsafe {
-            Server_SQFunctionProtoCreate.call(
-                ss,
-                ninstructions,
-                param_3,
-                param_4,
-                param_5,
-                param_6,
-                param_7,
-                param_8,
-                param_9,
-                param_10,
-                param_11,
-            )
-        },
-        ss,
-        ninstructions,
-        param_3,
-        param_4,
-        param_5,
-        param_6,
-        param_7,
-        param_8,
-        param_9,
-        param_10,
-        param_11,
-    )
+// TODO: check return address
+fn a(a1: *mut SQTable, a2: *mut SQObject, a3: usize) -> usize {
+    unsafe {
+        if let Some(shared) = FUN.lock().as_ref() {
+            log::info!("a {:?}", shared.get().as_ref().unwrap()._functions);
+            log::info!("a {:?}", shared.get().as_ref().unwrap()._functionsType);
+            log::info!("a {:?}", a1);
+        }
+
+        Inspect.call(a1, a2, a3)
+    }
 }
 
-fn hook_sq_function_proto(
-    org: fn(
-        *mut SQSharedState,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-    ) -> *mut SQFunctionProtoB,
-    ss: *mut SQSharedState,
-    ninstructions: i32,
-    param_3: i32,
-    param_4: i32,
-    param_5: i32,
-    param_6: i32,
-    param_7: i32,
-    param_8: i32,
-    param_9: i32,
-    param_10: i32,
-    param_11: i32,
-) -> *mut SQFunctionProtoB {
-    org(
-        ss,
-        ninstructions,
-        param_3,
-        param_4,
-        param_5,
-        param_6,
-        param_7,
-        param_8,
-        param_9,
-        param_10,
-        param_11,
-    )
+fn b(a1: usize, a2: usize, a3: usize, a4: usize, a5: u8) -> usize {
+    unsafe {
+        log::info!("lock in pls");
+
+        Inspect2.call(a1, a2, a3, a4, a5)
+    }
 }

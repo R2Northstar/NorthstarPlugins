@@ -83,6 +83,8 @@
             nativeBuildInputs = with pkgs; [
               toolchain
               pkg-config
+              native-pkgs.lldb.out
+              native-pkgs.gdb.out
             ];
 
             buildInputs = with pkgs; [

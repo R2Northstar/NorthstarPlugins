@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 
 use rrplug::{
     bindings::squirreldatatypes::{SQClosure, SQObject, SQObjectType, SQSharedState},
@@ -48,7 +48,7 @@ pub struct SQFuncState {
     pub gap_3194: [u8; 12],
     pub _parametersSize: u32,
     pub gap_31A4: [u8; 4],
-    pub unkknown_31A8: char,
+    pub unkknown_31A8: c_char,
     pub gap_31A9: [u8; 7],
     pub unknown_31B0: u32,
     pub gap_31B4: [u8; 4],
@@ -81,7 +81,7 @@ pub struct SQFuncState {
     pub gap_3284: [u8; 4],
     pub lastLineInfoLine: i32,
     pub gap_328C: [u8; 4],
-    pub unknown_3290: char,
+    pub unknown_3290: c_char,
     pub gap_3291: [u8; 7],
     pub sharedState: *mut SQSharedState,
     pub gap_32A0: [u8; 16],
