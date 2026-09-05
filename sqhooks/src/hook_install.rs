@@ -191,6 +191,16 @@ fn sqfunc_state_build_proto_hook(
             )
         };
 
+        let orig = unsafe {
+            let mut orig = UnsafeHandle::new(
+                NonNull::new(org(state).cast::<SQFunctionProto>())
+                    .expect("critical assertion violated"),
+            );
+            // increment ref count
+            orig.get_mut().as_mut().uiRef += 1;
+            orig
+        };
+
         let (closure_trampoline, mut trampoline) = match compile_trampoline(
             sqvm,
             SQFUNCTIONS.from_sqvm(sqvm),
@@ -201,18 +211,8 @@ fn sqfunc_state_build_proto_hook(
             Ok(o) => o,
             Err(err) => {
                 log::warn!("error occurred while building trampoline memory may be leaked : {err}");
-                return org(state);
+                return orig.take().as_ptr().cast();
             }
-        };
-
-        let orig = unsafe {
-            let mut orig = UnsafeHandle::new(
-                NonNull::new(org(state).cast::<SQFunctionProto>())
-                    .expect("critical assertion violated"),
-            );
-            // increment ref count
-            orig.get_mut().as_mut().uiRef += 1;
-            orig
         };
 
         unsafe { clone_func_name(orig.copy().as_ref(), trampoline.as_mut()) };
