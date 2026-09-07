@@ -152,6 +152,15 @@ fn sqclosure_new_hook_server(
     )
 }
 
+// notes about alternate solutions
+// currently I am more pivoting towards manually writing the proto but another
+// that could be done is to hook a function that sets up the call info for every
+// execution (server.dll+0x02dd20) which means the hook insertions will be working
+// in the hot path of the sqvm therefore it needs to be hyper optimized one of the
+// ways to achieve that is by pre allocating a trampoline. the trampoline would
+// have to be allocated right as the compiler ends compiling since it's not
+// possible to run a compiler inside of a compiler and execution can begin right as
+// the compiler does it's job => a lot of work finding all the compiler invocations
 fn sqclosure_new_hook(
     org: impl Fn(*mut SQClosure, *mut SQSharedState, *mut SQObject) -> *mut SQClosure + 'static,
     this: *mut SQClosure,
