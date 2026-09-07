@@ -3,9 +3,7 @@
 use std::ffi::{c_char, c_void};
 
 use rrplug::{
-    bindings::squirreldatatypes::{
-        SQClosure, SQFunctionProto, SQObject, SQObjectType, SQSharedState,
-    },
+    bindings::squirreldatatypes::{SQClosure, SQObject, SQObjectType, SQSharedState},
     offset_functions,
 };
 
@@ -311,11 +309,4 @@ pub enum SQOpCodes {
     OP_CHECK_ENTITY_CLASS = 122,
     OP_UNREACHABLE = 123,
     OP_ARRAY_RESIZE = 124,
-}
-
-impl From<&SQFunctionProto> for &SQFunctionProtoB {
-    fn from(value: &SQFunctionProto) -> Self {
-        // SAFETY: they are the same type expect the B one has more fields reversed
-        unsafe { std::mem::transmute(value) }
-    }
 }
