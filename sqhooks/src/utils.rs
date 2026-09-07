@@ -20,7 +20,7 @@ use crate::{
     hook_install::EXTRACT,
 };
 
-pub fn get_native_function<'a>(
+pub fn get_native_function(
     sqvm: NonNull<HSquirrelVM>,
     name: &str,
 ) -> Option<NonNull<SQNativeClosure>> {
@@ -32,9 +32,7 @@ pub fn get_native_function<'a>(
             .as_ref()
     };
     ty_filter(table)
-        .filter_map(|(key, closure)| {
-            Some((SQHandle::<SQString>::try_new(key.clone()).ok()?, closure))
-        })
+        .filter_map(|(key, closure)| Some((SQHandle::<SQString>::try_new(*key).ok()?, closure)))
         .find_map(|(key, closure)| {
             get_from_sq_string(key.get())
                 .filter(|cmp_name| *cmp_name == name)
@@ -67,16 +65,16 @@ pub fn ty_filter<'a, T: IsSQObject<'a> + 'a>(
 pub fn compile_trampoline(
     sqvm: NonNull<HSquirrelVM>,
     sq_functions: &SquirrelFunctions,
-    state: &SQFuncState,
+    ref_func: &SQFunctionProtoB,
     function_id: &str,
     trampoline_name: &str,
 ) -> Result<(NonNull<SQClosure>, NonNull<SQFunctionProto>), &'static str> {
-    let args = (1..state._parametersSize)
+    let args = (1..ref_func.nParameters)
         .map(|i| "var a".to_string() + &i.to_string() + ",")
         .collect::<String>();
     let args = args.strip_suffix(",").unwrap_or(&args);
 
-    let args_untyped = (1..state._parametersSize)
+    let args_untyped = (1..ref_func.nParameters)
         .map(|i| "a".to_string() + &i.to_string() + ",")
         .collect::<String>();
     let args_untyped = args_untyped.strip_suffix(",").unwrap_or(&args_untyped);

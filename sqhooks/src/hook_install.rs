@@ -26,6 +26,9 @@ use crate::{
 pub static HOOKS: LazyLock<Mutex<HashMap<ScriptContext, HashMap<String, Hook>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+pub static ORG_ID_MAP: LazyLock<Mutex<HashMap<usize, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 pub static HOOK_QUEUE: LazyLock<Mutex<HashMap<ScriptContext, Vec<(String, String)>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -36,16 +39,16 @@ pub static FUN: Mutex<Option<UnsafeHandle<*mut SQSharedState>>> = Mutex::new(Non
 
 static_detour! {
     static Server_SQFuncStateBuildProto: unsafe extern "C" fn(*mut SQFuncState) -> *mut SQFunctionProtoB;
+    static Server_SQClosureNew: unsafe extern "C" fn(*mut SQClosure, *mut SQSharedState, *mut SQObject) -> *mut SQClosure;
     static Client_SQFuncStateBuildProto: unsafe extern "C" fn(*mut SQFuncState) -> *mut SQFunctionProtoB;
-    static Inspect: unsafe extern "C" fn(*mut SQTable, *mut SQObject, usize) -> usize;
-    static Inspect2: unsafe extern "C" fn(usize, usize, usize, usize, u8) -> usize;
+    static Client_SQClosureNew: unsafe extern "C" fn(*mut SQClosure, *mut SQSharedState, *mut SQObject) -> *mut SQClosure;
 }
 
 #[derive(Debug)]
 pub struct Hook {
     pub hook_queue: Vec<UnsafeHandle<NonNull<SQFunctionProto>>>,
     pub current_hook: usize,
-    pub trampoline: UnsafeHandle<SQObject>,
+    pub trampoline: Option<UnsafeHandle<SQObject>>,
     pub arg_count: u32,
 }
 
@@ -72,6 +75,21 @@ pub fn init_hooks(dll: &DLLPointer) {
                     .expect("cannot initialize Client_SQFuncStateBuildProto")
                     .enable()
                     .expect("cannot hook Client_SQFuncStateBuildProto");
+                Client_SQClosureNew
+                    .initialize(
+                        transmute::<
+                            *const std::ffi::c_void,
+                            unsafe extern "C" fn(
+                                *mut SQClosure,
+                                *mut SQSharedState,
+                                *mut SQObject,
+                            ) -> *mut SQClosure,
+                        >(dll.offset(0x1c60)),
+                        sqclosure_new_hook_client,
+                    )
+                    .expect("cannot initialize Client_SQClosureNew")
+                    .enable()
+                    .expect("cannot hook Client_SQClosureNew");
             }
 
             WhichDll::Server => {
@@ -87,21 +105,154 @@ pub fn init_hooks(dll: &DLLPointer) {
                     .enable()
                     .expect("cannot hook Server_SQFuncStateBuildProto");
 
-                // Inspect
-                //     .initialize(transmute(dll.offset(0x6aac0)), a)
-                //     .expect("cannot initialize Inspect")
-                //     .enable()
-                //     .expect("cannot hook Inspect");
-
-                // Inspect2
-                //     .initialize(transmute(dll.offset(0x34810)), b)
-                //     .expect("cannot initialize Inspect2")
-                //     .enable()
-                //     .expect("cannot hook Inspect2");
+                Server_SQClosureNew
+                    .initialize(
+                        transmute::<
+                            *const std::ffi::c_void,
+                            unsafe extern "C" fn(
+                                *mut SQClosure,
+                                *mut SQSharedState,
+                                *mut SQObject,
+                            ) -> *mut SQClosure,
+                        >(dll.offset(0x1c60)),
+                        sqclosure_new_hook_server,
+                    )
+                    .expect("cannot initialize Server_SQClosureNew")
+                    .enable()
+                    .expect("cannot hook Server_SQClosureNew");
             }
             _ => {}
         }
     }
+}
+
+fn sqclosure_new_hook_client(
+    this: *mut SQClosure,
+    ss: *mut SQSharedState,
+    func: *mut SQObject,
+) -> *mut SQClosure {
+    sqclosure_new_hook(
+        |this, ss, func| unsafe { Client_SQClosureNew.call(this, ss, func) },
+        this,
+        ss,
+        func,
+    )
+}
+
+fn sqclosure_new_hook_server(
+    this: *mut SQClosure,
+    ss: *mut SQSharedState,
+    func: *mut SQObject,
+) -> *mut SQClosure {
+    sqclosure_new_hook(
+        |this, ss, func| unsafe { Server_SQClosureNew.call(this, ss, func) },
+        this,
+        ss,
+        func,
+    )
+}
+
+fn sqclosure_new_hook(
+    org: impl Fn(*mut SQClosure, *mut SQSharedState, *mut SQObject) -> *mut SQClosure + 'static,
+    this: *mut SQClosure,
+    ss: *mut SQSharedState,
+    func: *mut SQObject,
+) -> *mut SQClosure {
+    let org_to_id_map = ORG_ID_MAP.lock();
+
+    if let Some(function_name) = SQHandle::<SQFunctionProto>::try_new(unsafe { func.read() })
+        .ok()
+        .as_ref()
+        .and_then(|func| unsafe { func.get()._funcName.as_ref() })
+        .and_then(|name| get_from_sq_string(name))
+    {
+        let mut hooks = HOOKS.lock();
+        let csqvm = unsafe {
+            ss.as_ref()
+                .expect("shared state should be valid")
+                .cSquirrelVM
+                .as_ref()
+                .expect("csquirrelvm should be valid")
+        };
+
+        let context_hooks = hooks
+            .entry(ScriptContext::try_from(csqvm.vmContext).expect("somehow got invalid context"))
+            .or_default();
+        if let Some(key) = context_hooks
+            .keys()
+            .find(|function_id| function_id.ends_with(function_name))
+        {
+            log::info!("new closure {function_name} : {key}");
+        } else {
+            log::info!("new closure {function_name}");
+        }
+    }
+
+    let func = if let Some((function_id, org_proto_handle)) = unsafe { func.as_ref() }
+        .copied()
+        .and_then(|obj| SQHandle::<SQFunctionProto>::try_new(obj).ok())
+        .and_then(|func| {
+            Some((
+                org_to_id_map.get(&(std::ptr::from_ref(func.get()) as usize))?,
+                func,
+            ))
+        }) {
+        let mut hooks = HOOKS.lock();
+        let csqvm = unsafe {
+            ss.as_ref()
+                .expect("shared state should be valid")
+                .cSquirrelVM
+                .as_ref()
+                .expect("csquirrelvm should be valid")
+        };
+        let sqvm = NonNull::new(csqvm.sqvm).expect("sqvm should be valid");
+
+        let context_hooks = hooks
+            .entry(ScriptContext::try_from(csqvm.vmContext).expect("somehow got invalid context"))
+            .or_default();
+        log::info!("found {function_id}");
+
+        if let Some(hook) = context_hooks.get_mut(function_id) {
+            if let Some(trampoline) = &mut hook.trampoline {
+                trampoline.get_mut() as *mut SQObject // hopefully the lifetime is good
+            } else {
+                log::info!("creating a trampoline for {function_id}");
+                let trampoline_name = hook_dispatch::call_hook().sq_func_name;
+
+                let (closure_trampoline, mut trampoline) = match compile_trampoline(
+                    sqvm,
+                    SQFUNCTIONS.from_sqvm(sqvm),
+                    org_proto_handle.get().into(),
+                    function_id,
+                    &trampoline_name,
+                ) {
+                    Ok(o) => o,
+                    Err(err) => {
+                        log::warn!(
+                            "error occurred while building trampoline memory may be leaked : {err}"
+                        );
+                        return org(this, ss, func);
+                    }
+                };
+
+                clone_func_name(org_proto_handle.get(), unsafe { trampoline.as_mut() });
+
+                hook.trampoline =
+                    Some(unsafe { UnsafeHandle::new(wrap_in_object(closure_trampoline)) });
+
+                hook.trampoline
+                    .as_mut()
+                    .expect("there was just a write to this")
+                    .get_mut() as *mut SQObject
+            }
+        } else {
+            func
+        }
+    } else {
+        func
+    };
+
+    org(this, ss, func)
 }
 
 fn sqfunc_state_build_proto_hook_client(state: *mut SQFuncState) -> *mut SQFunctionProtoB {
@@ -127,7 +278,6 @@ fn sqfunc_state_build_proto_hook(
             .as_mut()
             .expect("null func state in builder not found")
     };
-    log::info!("1 {:?} {:?}", ptr::from_mut(state), state.sharedState);
     let Some(sqvm) = (unsafe {
         state
             .sharedState
@@ -171,84 +321,23 @@ fn sqfunc_state_build_proto_hook(
 
         let function_id = source_path.to_string() + function_name;
 
-        let trampoline_name = hook_dispatch::call_hook().sq_func_name;
-
-        unsafe {
-            log::info!(
-                "pre {:?}",
-                sqvm.as_ref()
-                    .sharedState
-                    .as_ref()
-                    .unwrap()
-                    ._functions
-                    .as_ref()
-            )
-        };
-        unsafe {
-            log::info!(
-                "pre {:?}",
-                sqvm.as_ref().sharedState.as_ref().unwrap()._functionsType,
-            )
-        };
-
-        let orig = unsafe {
-            let mut orig = UnsafeHandle::new(
-                NonNull::new(org(state).cast::<SQFunctionProto>())
-                    .expect("critical assertion violated"),
-            );
-            // increment ref count
-            orig.get_mut().as_mut().uiRef += 1;
-            orig
-        };
-
-        let (closure_trampoline, mut trampoline) = match compile_trampoline(
-            sqvm,
-            SQFUNCTIONS.from_sqvm(sqvm),
-            state,
-            &function_id,
-            &trampoline_name,
-        ) {
-            Ok(o) => o,
-            Err(err) => {
-                log::warn!("error occurred while building trampoline memory may be leaked : {err}");
-                return orig.take().as_ptr().cast();
-            }
-        };
-
-        unsafe { clone_func_name(orig.copy().as_ref(), trampoline.as_mut()) };
+        let orig = NonNull::new(org(state).cast::<SQFunctionProto>())
+            .expect("critical assertion violated");
 
         HOOKS.lock().entry(context).or_default().insert(
             function_id.clone(),
             Hook {
-                hook_queue: vec![orig],
+                hook_queue: vec![unsafe { UnsafeHandle::new(orig) }],
                 current_hook: 1, // top most hook
-                trampoline: unsafe { UnsafeHandle::new(wrap_in_object(closure_trampoline)) },
+                trampoline: None,
                 arg_count: state._parametersSize,
             },
         );
 
-        unsafe {
-            log::info!(
-                "post {:?}",
-                sqvm.as_ref()
-                    .sharedState
-                    .as_ref()
-                    .unwrap()
-                    ._functions
-                    .as_ref()
-            )
-        };
-        unsafe {
-            log::info!(
-                "post {:?}",
-                sqvm.as_ref().sharedState.as_ref().unwrap()._functionsType
-            )
-        };
-
         FUN.lock()
             .replace(unsafe { UnsafeHandle::new(sqvm.as_ref().sharedState) });
 
-        return trampoline.as_ptr().cast();
+        return orig.as_ptr().cast();
     }
 
     org(state)
@@ -294,25 +383,4 @@ pub fn extract(hook_func: SQObject) {
     lock.entry(context)
         .or_default()
         .replace(unsafe { UnsafeHandle::new(hook_func._VAL.asClosure) });
-}
-
-// TODO: check return address
-fn a(a1: *mut SQTable, a2: *mut SQObject, a3: usize) -> usize {
-    unsafe {
-        if let Some(shared) = FUN.lock().as_ref() {
-            log::info!("a {:?}", shared.get().as_ref().unwrap()._functions);
-            log::info!("a {:?}", shared.get().as_ref().unwrap()._functionsType);
-            log::info!("a {:?}", a1);
-        }
-
-        Inspect.call(a1, a2, a3)
-    }
-}
-
-fn b(a1: usize, a2: usize, a3: usize, a4: usize, a5: u8) -> usize {
-    unsafe {
-        log::info!("lock in pls");
-
-        Inspect2.call(a1, a2, a3, a4, a5)
-    }
 }

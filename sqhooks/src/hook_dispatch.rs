@@ -42,9 +42,12 @@ pub fn call_hook(function_id: String, args: Variadic<SQObject>) -> SQObject {
         wrap_in_object(new_closure(sqvm, unsafe {
             hook.hook_queue[hook.current_hook + 1].copy().as_ref()
         })),
-        hook.current_hook
-            .checked_sub(1)
-            .map(|_| hook.trampoline.copy()),
+        hook.current_hook.checked_sub(1).map(|_| {
+            hook.trampoline
+                .as_ref()
+                .expect("can't be in a hook without a valid trampoline")
+                .copy()
+        }),
         args.vargs,
     )
 }

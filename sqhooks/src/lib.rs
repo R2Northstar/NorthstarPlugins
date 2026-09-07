@@ -44,20 +44,20 @@ impl Plugin for SQHooks {
         {
             // decrement ref count
             // SAFETY: ref count is located in the same offset for all refcounted objected
-            unsafe {
-                hook.trampoline
-                    .get()
-                    ._VAL
-                    .asString
-                    .as_mut()
-                    .expect("invariant violated in on_sqvm_destroyed")
-                    .uiRef -= 1;
-            };
+            // unsafe {
+            //     hook.trampoline
+            //         .get()
+            //         ._VAL
+            //         .asString
+            //         .as_mut()
+            //         .expect("invariant violated in on_sqvm_destroyed")
+            //         .uiRef -= 1;
+            // };
 
-            for func in hook.hook_queue.iter_mut() {
-                // decrement ref count
-                unsafe { func.get_mut().as_mut().uiRef -= 1 };
-            }
+            // for func in hook.hook_queue.iter_mut() {
+            //     // decrement ref count
+            //     unsafe { func.get_mut().as_mut().uiRef -= 1 };
+            // }
         }
     }
 }
