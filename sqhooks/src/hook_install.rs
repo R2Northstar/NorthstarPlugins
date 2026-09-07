@@ -19,7 +19,8 @@ use crate::{
     bindings::{SQFuncState, SQFunctionProtoB},
     hook_dispatch,
     utils::{
-        as_func_proto, clone_func_name, compile_trampoline, get_from_sq_string, wrap_in_object,
+        as_func_proto, clone_func_name, compile_trampoline, get_from_sq_string, print_sqobject,
+        wrap_in_object,
     },
 };
 
@@ -214,6 +215,33 @@ fn sqfunc_state_build_proto_hook(
                 return orig.take().as_ptr().cast();
             }
         };
+
+        let trampoline_proto = unsafe { trampoline.cast::<SQFunctionProtoB>().as_ref() };
+        (0..dbg!(trampoline_proto.skippedInstruction.arg2 as usize))
+            .filter_map(|i| unsafe { trampoline_proto.instruction.as_ptr().add(i).as_ref() })
+            .for_each(|ins| log::info!("{ins:?}"));
+        (0..dbg!(trampoline_proto.localVarInfoSize as usize))
+            .filter_map(|i| unsafe { trampoline_proto.localVarInfos.add(i).as_ref() })
+            .for_each(|info| {
+                log::info!(
+                    "info: {info:?}, {:?}",
+                    SQHandle::try_new(info.name)
+                        .ok()
+                        .and_then(|name| get_from_sq_string(name.get()).map(ToString::to_string))
+                )
+            });
+        (0..dbg!(trampoline_proto.nParameters as usize))
+            .filter_map(|i| unsafe { trampoline_proto._parameters.add(i).as_ref() })
+            .for_each(print_sqobject);
+        (0..dbg!(trampoline_proto.nNativeClosureMaybe as usize))
+            .filter_map(|i| unsafe { trampoline_proto._nativeClosuresMaybe.add(i).as_ref() })
+            .for_each(print_sqobject);
+        (0..dbg!(trampoline_proto.otherVarInfoSize as usize))
+            .filter_map(|i| unsafe { trampoline_proto._otherVarInfo.add(i).as_ref() })
+            .for_each(|info| log::info!("other_info: {info:?}"));
+        (0..dbg!(trampoline_proto.nDefaultParams as usize))
+            .filter_map(|i| unsafe { trampoline_proto.objectArray_F0.add(i).as_ref() })
+            .for_each(print_sqobject);
 
         unsafe { clone_func_name(orig.copy().as_ref(), trampoline.as_mut()) };
 

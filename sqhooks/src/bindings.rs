@@ -3,7 +3,7 @@
 use std::ffi::{c_char, c_void};
 
 use rrplug::{
-    bindings::squirreldatatypes::{SQClosure, SQObject, SQObjectType, SQSharedState},
+    bindings::squirreldatatypes::{SQClosure, SQObject, SQObjectType, SQSharedState, SQString},
     offset_functions,
 };
 
@@ -18,9 +18,6 @@ offset_functions! {
         sqclosure_new_alloc = unsafe extern "C" fn(*mut SQSharedState, *mut SQObject) -> *mut SQClosure where offset(0x1d30);
     }
 }
-
-#[allow(non_camel_case_types)]
-type othervarInfo = ();
 
 #[allow(non_snake_case)]
 #[derive(Copy, Clone, Debug)]
@@ -99,12 +96,12 @@ pub struct SQFuncState {
 #[repr(C, align(8))]
 pub struct SQFunctionProtoB {
     pub vftable: *mut c_void,
-    pub uiRef: i32,
-    pub gap_0C: [u8; 12],
-    pub pointer_18: *mut c_void,
-    pub pointer_20: *mut c_void,
-    pub sharedState: *mut c_void,
-    pub pointer_30: *mut c_void,
+    pub uiRef: u32,
+    pub weakRef: [u8; 12],
+    pub next: *mut c_void,
+    pub prev: *mut c_void,
+    pub sharedState: *mut SQSharedState,
+    pub addr: *mut c_void,
     pub fileName: SQObject,
     pub funcName: SQObject,
     pub obj_58: SQObject,
@@ -123,15 +120,15 @@ pub struct SQFunctionProtoB {
     pub nParameters: i32,
     pub gap_AC: [u8; 4],
     pub _parameters: *mut SQObject,
-    pub unknown_B8: i32,
+    pub nNativeClosureMaybe: i32,
     pub gap_BC: [u8; 4],
-    pub unknownPointer: *mut SQObject,
+    pub _nativeClosuresMaybe: *mut SQObject,
     pub unknown_C8: i32,
     pub gap_CC: [u8; 4],
     pub unknownArray_D0: *mut usize,
     pub otherVarInfoSize: i32,
     pub gap_DC: [u8; 4],
-    pub _otherVarInfo: *mut othervarInfo,
+    pub _otherVarInfo: *mut OtherVarInfo,
     pub nDefaultParams: i32,
     pub gap_EC: [u8; 4],
     pub objectArray_F0: *mut SQObject,
@@ -139,6 +136,17 @@ pub struct SQFunctionProtoB {
     pub gap_FC: [u8; 4],
     pub skippedInstruction: SQInstruction,
     pub instruction: [SQInstruction; 1],
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct OtherVarInfo {
+    unknown_0: i64,
+    unknown_8: i64,
+    name: *const SQString,
+    unknown_18: i64,
+    unknown_20: i64,
+    stackposition: i64,
 }
 
 #[derive(Copy, Clone, Debug)]

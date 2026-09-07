@@ -90,10 +90,6 @@ pub fn compile_trampoline(
         return Err("failed to compile trampoline");
     };
 
-    if unsafe { (sq_functions.sq_newtable)(sqvm.as_ptr()) } == SQRESULT::SQRESULT_ERROR {
-        return Err("failed to create tmp table");
-    }
-
     let (mut trampoline, mut closure_trampoline) = unsafe {
         let sqclosure = NonNull::from_mut(
             EXTRACT
@@ -210,4 +206,49 @@ pub fn get_from_sq_string(buf: &rrplug::bindings::squirreldatatypes::SQString) -
         std::slice::from_raw_parts(buf._val.as_ptr().cast(), buf.length as usize)
     })
     .ok()
+}
+pub fn print_sqobject(
+    &SQObject {
+        _Type,
+        structNumber: _,
+        _VAL,
+    }: &SQObject,
+) {
+    match _Type {
+        SQObjectType::OT_USERPOINTER => log::info!("{:?}", SQObjectType::OT_USERPOINTER),
+        SQObjectType::OT_VECTOR => log::info!("{:?}", SQObjectType::OT_VECTOR),
+        SQObjectType::OT_NULL => log::info!("{:?}", SQObjectType::OT_NULL),
+        SQObjectType::OT_BOOL => {
+            log::info!("{:?}: {}", SQObjectType::OT_BOOL, unsafe { _VAL.asInteger })
+        }
+        SQObjectType::OT_INTEGER => log::info!("{:?}: {}", SQObjectType::OT_INTEGER, unsafe {
+            _VAL.asInteger
+        }),
+        SQObjectType::OT_FLOAT => {
+            log::info!("{:?}: {}", SQObjectType::OT_FLOAT, unsafe { _VAL.asFloat })
+        }
+        SQObjectType::OT_STRING => log::info!(
+            "{:?}: {:?}",
+            SQObjectType::OT_STRING,
+            get_from_sq_string(unsafe { _VAL.asString.as_ref().unwrap() })
+        ),
+        SQObjectType::OT_ARRAY => log::info!("{:?}", SQObjectType::OT_ARRAY),
+        SQObjectType::OT_CLOSURE => log::info!("{:?}", SQObjectType::OT_CLOSURE),
+        SQObjectType::OT_NATIVECLOSURE => log::info!("{:?}", SQObjectType::OT_NATIVECLOSURE),
+        SQObjectType::OT_ASSET => log::info!(
+            "{:?}: {:?}",
+            SQObjectType::OT_ASSET,
+            get_from_sq_string(unsafe { _VAL.asString.as_ref().unwrap() })
+        ),
+        SQObjectType::OT_THREAD => log::info!("{:?}", SQObjectType::OT_THREAD),
+        SQObjectType::OT_FUNCPROTO => log::info!("{:?}", SQObjectType::OT_FUNCPROTO),
+        SQObjectType::OT_CLASS => log::info!("{:?}", SQObjectType::OT_CLASS),
+        SQObjectType::OT_STRUCT => log::info!("{:?}", SQObjectType::OT_STRUCT),
+        SQObjectType::OT_WEAKREF => log::info!("{:?}", SQObjectType::OT_WEAKREF),
+        SQObjectType::OT_TABLE => log::info!("{:?}", SQObjectType::OT_TABLE),
+        SQObjectType::OT_USERDATA => log::info!("{:?}", SQObjectType::OT_USERDATA),
+        SQObjectType::OT_INSTANCE => log::info!("{:?}", SQObjectType::OT_INSTANCE),
+        SQObjectType::OT_ENTITY => log::info!("{:?}", SQObjectType::OT_ENTITY),
+        _ => log::info!("unknown"),
+    }
 }
