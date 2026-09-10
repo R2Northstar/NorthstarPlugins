@@ -1,7 +1,7 @@
 use retour::static_detour;
 use rrplug::{
     bindings::squirreldatatypes::CSquirrelVM,
-    mid::squirrel::{manually_register_sq_functions, sqvm_to_context},
+    mid::squirrel::{SQFuncInfo, manually_register_sq_functions, sqvm_to_context},
     prelude::*,
 };
 use std::{ffi::c_void, mem::transmute};
@@ -82,7 +82,15 @@ fn hook_csquirrel_vm_init_gc(
 ) {
     _ = mid::squirrel::SQFUNCTIONS.try_init(); // make sure all functions exist
     _ = unsafe { manually_register_sq_functions(&mut *csqvm, &register_hook()) };
-    _ = unsafe { manually_register_sq_functions(&mut *csqvm, &hook_dispatch::call_hook()) };
+    _ = unsafe {
+        manually_register_sq_functions(
+            &mut *csqvm,
+            &SQFuncInfo {
+                types: Box::from("string, ..."),
+                ..hook_dispatch::call_hook()
+            },
+        )
+    };
     _ = unsafe { manually_register_sq_functions(&mut *csqvm, &hook_install::extract()) };
 }
 

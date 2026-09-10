@@ -3,19 +3,27 @@
 use std::ffi::{c_char, c_void};
 
 use rrplug::{
-    bindings::squirreldatatypes::{SQClosure, SQObject, SQObjectType, SQSharedState, SQString},
+    bindings::squirreldatatypes::{
+        SQClosure, SQObject, SQObjectType, SQSharedState, SQString, SQStructDef, StringTable,
+    },
     offset_functions,
 };
 
 offset_functions! {
     SERVER_FUNCTIONS + ServerFunctions for WhichDll::Server => {
         sqclosure_new_alloc = unsafe extern "C" fn(*mut SQSharedState, *mut SQObject) -> *mut SQClosure where offset(0x1d30);
+        sqclosure_create = unsafe extern "C" fn(ss: *mut SQSharedState, obj: *mut SQObject) -> *mut SQClosure where offset(0x29bb0);
+        sqfunctionproto_create = unsafe extern "C" fn(ss: *mut SQSharedState, ninstructions: i32, nliterals: i32, nparameters: i32, nfunctions: i32, unknown_c8: i32, nothervarinfo: i32, nlineinfos: i32, nlocalvarinfos: i32, ndefaultparams: i32,param_11: i32) -> *mut SQFunctionProtoB where offset(0x648c0);
+        sqstringtable_add = unsafe extern "C" fn(*mut StringTable, *const c_char, u64) -> *mut SQString where offset(0x3cb30);
     }
 }
 
 offset_functions! {
     CLIENT_FUNCTIONS + ClientFunctions for WhichDll::Client => { // wrong offsets
         sqclosure_new_alloc = unsafe extern "C" fn(*mut SQSharedState, *mut SQObject) -> *mut SQClosure where offset(0x1d30);
+        sqclosure_create = unsafe extern "C" fn(ss: *mut SQSharedState, obj: *mut SQObject) -> *mut SQClosure where offset(0x029c00);
+        sqfunctionproto_create = unsafe extern "C" fn(ss: *mut SQSharedState, ninstructions: i32, nliterals: i32, nparameters: i32, nfunctions: i32, unknown_c8: i32, nothervarinfo: i32, nlineinfos: i32, nlocalvarinfos: i32, ndefaultparams: i32,param_11: i32) -> *mut SQFunctionProtoB where offset(0x64920);
+        sqstringtable_add = unsafe extern "C" fn(*mut StringTable, *const c_char, u64) -> *mut SQString where offset(0x3cb80);
     }
 }
 
@@ -120,9 +128,9 @@ pub struct SQFunctionProtoB {
     pub nParameters: i32,
     pub gap_AC: [u8; 4],
     pub _parameters: *mut SQObject,
-    pub nNativeClosureMaybe: i32,
+    pub nfunctions: i32,
     pub gap_BC: [u8; 4],
-    pub _nativeClosuresMaybe: *mut SQObject,
+    pub _functions: *mut SQObject,
     pub unknown_C8: i32,
     pub gap_CC: [u8; 4],
     pub unknownArray_D0: *mut usize,
@@ -163,11 +171,58 @@ pub struct SQInstruction {
 #[repr(C)]
 pub struct SQLocalVarInfo {
     pub name: SQObject,
-    pub qword10: usize,
+    pub type_descriptor: *const TypeDescriptor,
     pub _start_op: i32,
     pub _end_op: i32,
     pub stackpos: i32,
     pub dword24: i32,
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct TypeDescriptor {
+    pub group: SQTypeGroup,
+    pub type_hash: i32,
+    pub base: SQTypeValue,
+}
+
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub union SQTypeValue {
+    /* DO NOT CHANGE THE ORDER OF THE MEMBERS | not sure about any of these */
+    pub prim_type: SQObjectType, /* object type of a primitive compiler type */
+    pub next_idx: i32,           /* ? */
+    pub static_array_size: i32,  /* size of static arrays */
+    pub base_type: SQObjectType, /* primitive content type (?) */
+    pub fn_ref: *const FunctionRefTy,
+    pub r#struct: *const SQStructDef, /* SQStructDef* */
+    pub next: *const SQExpression,
+}
+
+pub type FunctionRefTy = usize;
+pub type SQExpression = TypeDescriptor; // it's a child of TypeDescriptor seemingly
+
+#[derive(Copy, Clone, Debug)]
+#[non_exhaustive]
+#[repr(u32)]
+pub enum SQTypeGroup {
+    TyPrimitive = 0, /* This is includes the special `void` null type */
+    TyStaticArray = 1,
+    TyNamedStruct = 2,
+    TyReference = 3,
+    TyOrnull = 4,
+    TyFunctionref = 5,
+    TyArray = 6,
+    TyTable = 7,
+    TyUnknown3 = 8,
+    TyUnknown4 = 9,
+    TyUnknown5 = 10,
+    TyUnknown6 = 13,
+    TyUnknown7 = 14,
+    TyUnknown8 = 16,
+    TyUnknown9 = 17,
+    TyUnknown10 = 18,
+    TyUnknown11 = 19,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -317,4 +372,10 @@ pub enum SQOpCodes {
     OP_CHECK_ENTITY_CLASS = 122,
     OP_UNREACHABLE = 123,
     OP_ARRAY_RESIZE = 124,
+}
+
+impl std::fmt::Debug for SQTypeValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SQTypeValue { ... }")
+    }
 }

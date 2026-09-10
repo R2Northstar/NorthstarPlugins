@@ -1,8 +1,8 @@
+#![feature(iter_array_chunks)]
+
 use rrplug::prelude::*;
 
 use crate::bindings::{CLIENT_FUNCTIONS, ClientFunctions, SERVER_FUNCTIONS, ServerFunctions};
-
-pub struct SQHooks;
 
 mod bindings;
 mod hook_dispatch;
@@ -10,6 +10,8 @@ mod hook_install;
 mod pre_sqvm;
 mod utils;
 mod variadic;
+
+pub struct SQHooks;
 
 impl Plugin for SQHooks {
     const PLUGIN_INFO: PluginInfo =
@@ -35,29 +37,42 @@ impl Plugin for SQHooks {
         }
     }
 
+    fn on_sqvm_created(&self, _sqvm_handle: &CSquirrelVMHandle, _engine_token: EngineToken) {
+        let descriptors = hook_install::TYPE_DESCRIPTOR_ADDRS.lock();
+
+        let min = descriptors
+            .iter()
+            .copied()
+            .map(|addr| addr as isize)
+            .enumerate()
+            .flat_map(|(i, addr)| {
+                descriptors
+                    .iter()
+                    .copied()
+                    .map(|addr| addr as isize)
+                    .enumerate()
+                    .filter(move |(j, _)| i != *j)
+                    .map(move |(_, other_addr)| (other_addr - addr).unsigned_abs())
+            })
+            .filter(|size| *size != 0)
+            .min()
+            .unwrap_or(usize::MAX);
+
+        log::info!("the type descriptor size is probably : {min}")
+    }
+
     fn on_sqvm_destroyed(&self, sqvm_handle: &CSquirrelVMHandle, _engine_token: EngineToken) {
         for hook in hook_install::HOOKS
             .lock()
-            .entry(sqvm_handle.get_context())
-            .or_default()
-            .values_mut()
+            .remove(&sqvm_handle.get_context())
+            .into_iter()
+            .flat_map(|hooks| hooks.into_values())
         {
-            // decrement ref count
-            // SAFETY: ref count is located in the same offset for all refcounted objected
-            unsafe {
-                hook.trampoline
-                    .get()
-                    ._VAL
-                    .asString
-                    .as_mut()
-                    .expect("invariant violated in on_sqvm_destroyed")
-                    .uiRef -= 1;
-            };
-
-            for func in hook.hook_queue.iter_mut() {
-                // decrement ref count
-                unsafe { func.get_mut().as_mut().uiRef -= 1 };
-            }
+            // free_sqobject(hook.trampoline.take());
+            // skip the original proto func
+            // for func in hook.hook_queue.into_iter().skip(1) {
+            //     free_sqobject(wrap_in_object(func.take()));
+            // }
         }
     }
 }

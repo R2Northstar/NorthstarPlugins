@@ -3,24 +3,18 @@
 use parking_lot::Mutex;
 use retour::static_detour;
 use rrplug::{
-    bindings::squirreldatatypes::{SQClosure, SQFunctionProto, SQObject, SQSharedState, SQTable},
+    bindings::squirreldatatypes::{SQClosure, SQFunctionProto, SQObject, SQString},
     high::{UnsafeHandle, squirrel::SQHandle, squirrel_traits::IsSQObject},
     mid::squirrel::sqvm_to_context,
     prelude::*,
 };
-use std::{
-    collections::HashMap,
-    mem::transmute,
-    ptr::{self, NonNull},
-    sync::LazyLock,
-};
+use std::{collections::HashMap, mem::transmute, ptr::NonNull, sync::LazyLock};
 
 use crate::{
     bindings::{SQFuncState, SQFunctionProtoB},
     hook_dispatch,
     utils::{
-        as_func_proto, clone_func_name, compile_trampoline, get_from_sq_string, print_sqobject,
-        wrap_in_object,
+        as_func_proto, compile_trampoline, get_from_sq_string, print_sqobject, wrap_in_object,
     },
 };
 
@@ -33,13 +27,11 @@ pub static HOOK_QUEUE: LazyLock<Mutex<HashMap<ScriptContext, Vec<(String, String
 pub static EXTRACT: LazyLock<Mutex<HashMap<ScriptContext, Option<UnsafeHandle<*mut SQClosure>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub static FUN: Mutex<Option<UnsafeHandle<*mut SQSharedState>>> = Mutex::new(None);
+pub static TYPE_DESCRIPTOR_ADDRS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 static_detour! {
     static Server_SQFuncStateBuildProto: unsafe extern "C" fn(*mut SQFuncState) -> *mut SQFunctionProtoB;
     static Client_SQFuncStateBuildProto: unsafe extern "C" fn(*mut SQFuncState) -> *mut SQFunctionProtoB;
-    static Inspect: unsafe extern "C" fn(*mut SQTable, *mut SQObject, usize) -> usize;
-    static Inspect2: unsafe extern "C" fn(usize, usize, usize, usize, u8) -> usize;
 }
 
 #[derive(Debug)]
@@ -87,18 +79,6 @@ pub fn init_hooks(dll: &DLLPointer) {
                     .expect("cannot initialize Server_SQFuncStateBuildProto")
                     .enable()
                     .expect("cannot hook Server_SQFuncStateBuildProto");
-
-                // Inspect
-                //     .initialize(transmute(dll.offset(0x6aac0)), a)
-                //     .expect("cannot initialize Inspect")
-                //     .enable()
-                //     .expect("cannot hook Inspect");
-
-                // Inspect2
-                //     .initialize(transmute(dll.offset(0x34810)), b)
-                //     .expect("cannot initialize Inspect2")
-                //     .enable()
-                //     .expect("cannot hook Inspect2");
             }
             _ => {}
         }
@@ -128,7 +108,6 @@ fn sqfunc_state_build_proto_hook(
             .as_mut()
             .expect("null func state in builder not found")
     };
-    log::info!("1 {:?} {:?}", ptr::from_mut(state), state.sharedState);
     let Some(sqvm) = (unsafe {
         state
             .sharedState
@@ -174,24 +153,6 @@ fn sqfunc_state_build_proto_hook(
 
         let trampoline_name = hook_dispatch::call_hook().sq_func_name;
 
-        unsafe {
-            log::info!(
-                "pre {:?}",
-                sqvm.as_ref()
-                    .sharedState
-                    .as_ref()
-                    .unwrap()
-                    ._functions
-                    .as_ref()
-            )
-        };
-        unsafe {
-            log::info!(
-                "pre {:?}",
-                sqvm.as_ref().sharedState.as_ref().unwrap()._functionsType,
-            )
-        };
-
         let orig = unsafe {
             let mut orig = UnsafeHandle::new(
                 NonNull::new(org(state).cast::<SQFunctionProto>())
@@ -202,10 +163,10 @@ fn sqfunc_state_build_proto_hook(
             orig
         };
 
-        let (closure_trampoline, mut trampoline) = match compile_trampoline(
+        let (closure_trampoline, trampoline) = match compile_trampoline(
             sqvm,
-            SQFUNCTIONS.from_sqvm(sqvm),
-            state,
+            // SQFUNCTIONS.from_sqvm(sqvm),
+            unsafe { orig.copy().cast().as_ref() },
             &function_id,
             &trampoline_name,
         ) {
@@ -224,17 +185,19 @@ fn sqfunc_state_build_proto_hook(
             .filter_map(|i| unsafe { trampoline_proto.localVarInfos.add(i).as_ref() })
             .for_each(|info| {
                 log::info!(
-                    "info: {info:?}, {:?}",
+                    "info: {info:?}, {:?}, {:?}",
                     SQHandle::try_new(info.name)
                         .ok()
-                        .and_then(|name| get_from_sq_string(name.get()).map(ToString::to_string))
-                )
+                        .and_then(|name| get_from_sq_string(name.get()).map(ToString::to_string)),
+                    unsafe { info.type_descriptor.as_ref() },
+                );
             });
         (0..dbg!(trampoline_proto.nParameters as usize))
             .filter_map(|i| unsafe { trampoline_proto._parameters.add(i).as_ref() })
             .for_each(print_sqobject);
-        (0..dbg!(trampoline_proto.nNativeClosureMaybe as usize))
-            .filter_map(|i| unsafe { trampoline_proto._nativeClosuresMaybe.add(i).as_ref() })
+        log::info!("functions");
+        (0..dbg!(trampoline_proto.nfunctions as usize))
+            .filter_map(|i| unsafe { trampoline_proto._functions.add(i).as_ref() })
             .for_each(print_sqobject);
         (0..dbg!(trampoline_proto.otherVarInfoSize as usize))
             .filter_map(|i| unsafe { trampoline_proto._otherVarInfo.add(i).as_ref() })
@@ -242,8 +205,33 @@ fn sqfunc_state_build_proto_hook(
         (0..dbg!(trampoline_proto.nDefaultParams as usize))
             .filter_map(|i| unsafe { trampoline_proto.objectArray_F0.add(i).as_ref() })
             .for_each(print_sqobject);
-
-        unsafe { clone_func_name(orig.copy().as_ref(), trampoline.as_mut()) };
+        log::info!("literals");
+        (0..dbg!(trampoline_proto.literalsSize as usize))
+            .filter_map(|i| unsafe { trampoline_proto.literals.add(i).as_ref() })
+            .for_each(print_sqobject);
+        log::info!("original locals");
+        (0..dbg!(unsafe {
+            orig.get()
+                .cast::<SQFunctionProtoB>()
+                .as_ref()
+                .localVarInfoSize as usize
+        }))
+            .filter_map(|i| unsafe {
+                orig.get()
+                    .cast::<SQFunctionProtoB>()
+                    .as_ref()
+                    .localVarInfos
+                    .add(i)
+                    .as_ref()
+            })
+            .for_each(|info| {
+                log::info!(
+                    "info: {info:?}, {:?}",
+                    SQHandle::try_new(info.name)
+                        .ok()
+                        .and_then(|name| get_from_sq_string(name.get()).map(ToString::to_string))
+                )
+            });
 
         HOOKS.lock().entry(context).or_default().insert(
             function_id.clone(),
@@ -251,51 +239,60 @@ fn sqfunc_state_build_proto_hook(
                 hook_queue: vec![orig],
                 current_hook: 1, // top most hook
                 trampoline: unsafe { UnsafeHandle::new(wrap_in_object(closure_trampoline)) },
-                arg_count: state._parametersSize,
+                arg_count: state._parametersSize.saturating_sub(1), // _parametersSize also includes root table so we skip that
             },
         );
-
-        unsafe {
-            log::info!(
-                "post {:?}",
-                sqvm.as_ref()
-                    .sharedState
-                    .as_ref()
-                    .unwrap()
-                    ._functions
-                    .as_ref()
-            )
-        };
-        unsafe {
-            log::info!(
-                "post {:?}",
-                sqvm.as_ref().sharedState.as_ref().unwrap()._functionsType
-            )
-        };
-
-        FUN.lock()
-            .replace(unsafe { UnsafeHandle::new(sqvm.as_ref().sharedState) });
 
         return trampoline.as_ptr().cast();
     }
 
-    org(state)
+    let func = unsafe { org(state).as_mut().unwrap() };
+
+    // log::info!(
+    //     "{} locals",
+    //     SQHandle::try_new(func.funcName)
+    //         .ok()
+    //         .and_then(|name| get_from_sq_string(name.get()).map(ToString::to_string))
+    //         .unwrap_or_default()
+    // );
+    // (0..dbg!(func.localVarInfoSize as usize))
+    //     .filter_map(|i| unsafe { func.localVarInfos.add(i).as_ref() })
+    //     .for_each(|info| {
+    //         TYPE_DESCRIPTOR_ADDRS
+    //             .lock()
+    //             .push(info.type_descriptor as usize);
+    //         log::info!(
+    //             "info: {info:?}, {:?}, {:?}",
+    //             SQHandle::try_new(info.name)
+    //                 .ok()
+    //                 .and_then(|name| get_from_sq_string(name.get()).map(ToString::to_string)),
+    //             unsafe { info.type_descriptor.as_ref() },
+    //         )
+    //     });
+
+    func
 }
 
 #[rrplug::sqfunction(VM = "SERVER | UI | CLIENT", ExportName = "HookOn")]
-pub fn hook_on(function_id: String, hook_func: SQHandle<SQClosure>) -> Option<String> {
+pub fn hook_on(
+    function_id: SQHandle<SQString>,
+    hook_func: SQHandle<SQClosure>,
+) -> Result<(), String> {
     let context = unsafe { sqvm_to_context(sqvm) };
     let mut hooks = HOOKS.lock();
     let hooks = hooks.entry(context).or_default();
-    let Some(hook) = hooks.get_mut(&function_id) else {
-        return Some(
-            "couldn't find the function from it's function id of ".to_string() + &function_id,
+    let Some(hook) =
+        get_from_sq_string(function_id.get()).and_then(|function_id| hooks.get_mut(function_id))
+    else {
+        return Err(
+            "couldn't find the function from it's function id of ".to_string()
+                + get_from_sq_string(function_id.get()).unwrap_or_default(),
         );
     };
 
     let mut proto_func = match as_func_proto(hook_func.take_obj()) {
         Ok(proto_func) => proto_func,
-        Err(err) => return Some(err.to_string()),
+        Err(err) => return Err(err.to_string()),
     };
 
     // increment ref count
@@ -303,11 +300,11 @@ pub fn hook_on(function_id: String, hook_func: SQHandle<SQClosure>) -> Option<St
         proto_func.as_mut().uiRef += 1;
     }
 
-    hook.current_hook += 1;
     hook.hook_queue
         .push(unsafe { UnsafeHandle::new(proto_func) });
+    hook.current_hook = hook.hook_queue.len();
 
-    None
+    Ok(())
 }
 
 #[rrplug::sqfunction(VM = "SERVER | UI | CLIENT", ExportName = "__EXTRACT")]
@@ -322,25 +319,4 @@ pub fn extract(hook_func: SQObject) {
     lock.entry(context)
         .or_default()
         .replace(unsafe { UnsafeHandle::new(hook_func._VAL.asClosure) });
-}
-
-// TODO: check return address
-fn a(a1: *mut SQTable, a2: *mut SQObject, a3: usize) -> usize {
-    unsafe {
-        if let Some(shared) = FUN.lock().as_ref() {
-            log::info!("a {:?}", shared.get().as_ref().unwrap()._functions);
-            log::info!("a {:?}", shared.get().as_ref().unwrap()._functionsType);
-            log::info!("a {:?}", a1);
-        }
-
-        Inspect.call(a1, a2, a3)
-    }
-}
-
-fn b(a1: usize, a2: usize, a3: usize, a4: usize, a5: u8) -> usize {
-    unsafe {
-        log::info!("lock in pls");
-
-        Inspect2.call(a1, a2, a3, a4, a5)
-    }
 }
