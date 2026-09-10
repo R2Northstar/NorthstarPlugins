@@ -53,13 +53,8 @@
         {
           ranim = mkPlugin "ranim";
           serialized-io = mkPlugin "serialized_io";
-          default = pkgs.symlinkJoin {
-            name = "plugins";
-            paths = with self.packages.${system}; [
-              ranim
-              serialized-io
-            ];
-          };
+          sqhooks = mkPlugin "sqhooks";
+          default = self.packages.${system}.all;
           all = pkgs.symlinkJoin {
             name = "plugins";
             paths = with self.packages.${system}; [

@@ -1,0 +1,12 @@
+[package]
+name = "sqhooks"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+parking_lot = "*"
+retour = { version = "0.4.0-alpha.4" , features = ["static-detour"] }
+rrplug = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
